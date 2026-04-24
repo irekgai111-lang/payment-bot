@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python bot.py)",
+      "Bash(pip install *)",
+      "Bash(pip list)",
+      "Bash(ls *)"
+    ]
+  }
+}
