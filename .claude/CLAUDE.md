@@ -2,6 +2,8 @@
 
 Telegram-бот продажи гайда «Обучение администраторов» (автор: Энже Гайнемухаметова).
 
+**GitHub:** https://github.com/irekgai111-lang/payment-bot
+
 ## Стек
 - Python 3.12, aiogram 3.27.0, python-dotenv 1.2.2
 - Запуск: `python bot.py` (из папки payment-bot/)
@@ -20,8 +22,10 @@ Telegram-бот продажи гайда «Обучение администр�
 - guide_vip — VIP: гайд + разбор 1-на-1 (60 мин), 6 900 ₽
 
 ## Правила
+- ⛔ **НИКОГДА не удалять папку `.git`** — это сердце проекта
 - НЕ коммитить `.env` (уже в .gitignore)
 - НЕ создавать копии бота в других папках — этот проект живёт только в `payment-bot/`
+- После каждого изменения: `git commit` + `git push` в https://github.com/irekgai111-lang/payment-bot
 - Карта: Visa 4278 3200 2347 0544, держатель `ENZHE GAINEMUKHAMETOVA`
 - Все сообщения боту — по-русски, обращение на «ты»
 
