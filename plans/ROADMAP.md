@@ -17,6 +17,9 @@
 - PID-lock `bot.pid` против двойного запуска
 - `.gitignore` закрывает `.env`, `payments.db`, `bot_logs.log`, `bot.pid`
 - Бот успешно запущен, токен в `.env`, ADMIN_ID настроен
+- ⚡ Автозапуск через Windows Task Scheduler (задача `ServiceUpgradeBot`, триггер `AtLogOn`, авто-перезапуск 3× с интервалом 1 мин, защита от дубликатов)
+- `start-bot.bat` — launcher: cd в папку, очистка stale `bot.pid`, запуск `python bot.py` с логированием в `bot_logs.log`
+- Документация для оператора: `docs/OPERATIONS.md` (что делать ежедневно/при проблемах)
 
 ## 🔴 Срочно (для перехода из демо в продакшн)
 
