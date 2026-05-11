@@ -22,6 +22,24 @@ Telegram-бот приёма оплат **в долларах США на узб
 - `plans/ROADMAP.md` — план доработок
 - `docs/RESEARCH.md` — рыночное и техническое исследование (USD на UZ-карту, альтернативы)
 - `docs/user-flow.md` — пользовательский сценарий
+- `start-bot.bat` — launcher для Windows Task Scheduler (автозапуск при логине)
+- `bot_logs.log` — лог запусков и polling-событий (в `.gitignore`)
+
+## Автозапуск (Windows Task Scheduler)
+
+Зарегистрирована задача `ServiceUpgradeBot`:
+
+- Trigger: `AtLogOn` (при входе пользователя в Windows)
+- Action: `start-bot.bat` (cd в папку, удаление stale `bot.pid`, запуск `python bot.py`, логи в `bot_logs.log`)
+- Restart: 3 попытки с интервалом 1 минута при падении
+- MultipleInstances: `IgnoreNew` (не запускать второй экземпляр, если первый жив)
+
+Управление:
+
+- `Start-ScheduledTask -TaskName ServiceUpgradeBot` — запустить вручную
+- `Stop-ScheduledTask -TaskName ServiceUpgradeBot` — остановить задачу (процесс убить отдельно: `Stop-Process -Name python`)
+- `Get-ScheduledTaskInfo -TaskName ServiceUpgradeBot` — статус последнего запуска
+- `Unregister-ScheduledTask -TaskName ServiceUpgradeBot -Confirm:$false` — удалить задачу
 
 ## Поток клиента
 
