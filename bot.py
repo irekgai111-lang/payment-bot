@@ -18,7 +18,7 @@ from aiogram.types import (
     Message,
 )
 
-from config import ADMIN_ID, BOT_TOKEN, CARD_HOLDER, CARD_NUMBER, SUPPORT_PHONE, MIN_AMOUNT, MAX_AMOUNT
+from config import ADMIN_ID, BOT_TOKEN, CARD_HOLDER, CARD_NUMBER, SUPPORT_PHONE, PRODUCTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ def init_db():
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             username TEXT,
+            product_name TEXT NOT NULL,
             amount REAL NOT NULL,
             status TEXT DEFAULT 'pending',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -72,12 +73,12 @@ def init_db():
     conn.close()
 
 
-def save_payment(user_id: int, name: str, username: str, amount: float):
+def save_payment(user_id: int, name: str, username: str, product_name: str, amount: float):
     conn = sqlite3.connect("payments.db")
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO payments (user_id, name, username, amount) VALUES (?, ?, ?, ?)",
-        (user_id, name, username, amount)
+        "INSERT INTO payments (user_id, name, username, product_name, amount) VALUES (?, ?, ?, ?, ?)",
+        (user_id, name, username, product_name, amount)
     )
     conn.commit()
     conn.close()
@@ -99,7 +100,7 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-user_amounts: Dict[int, float] = {}
+user_products: Dict[int, dict] = {}
 user_last_request: Dict[int, datetime] = {}
 
 RATE_LIMIT_SECONDS = 5
@@ -118,6 +119,17 @@ def check_rate_limit(user_id: int) -> bool:
     return True
 
 
+def products_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{p['name']} — ${p['price']:.2f}",
+            callback_data=f"product:{key}"
+        )]
+        for key, p in PRODUCTS.items()
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 # ── /start ─────────────────────────────────────────────────────
 
 @router.message(Command("start"))
@@ -125,10 +137,8 @@ async def cmd_start(message: Message):
     user = message.from_user
     await message.answer(
         f"Привет, {user.first_name}! 👋\n\n"
-        "💳 <b>Введи сумму в USD</b> для оплаты\n\n"
-        "Минимум: <b>${}</b> | Максимум: <b>${}</b>\n\n"
-        "Например: <code>50</code> или <code>$100</code>\n\n"
-        "Введи /help для подробной информации".format(MIN_AMOUNT, MAX_AMOUNT)
+        "💳 <b>Выбери вариант продукта:</b>",
+        reply_markup=products_keyboard()
     )
     if ADMIN_ID:
         username = f"@{user.username}" if user.username else "—"
@@ -147,14 +157,20 @@ async def cmd_start(message: Message):
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
+    products_list = "\n".join([
+        f"• {p['name']} — ${p['price']:.2f} ({p['description']})"
+        for p in PRODUCTS.values()
+    ])
+
     await message.answer(
-        "<b>📖 Как пользоваться ботом:</b>\n\n"
-        "1️⃣ Введи сумму в USD (например: 50 или $100)\n"
-        "2️⃣ Получишь реквизиты карты\n"
-        "3️⃣ Переведи ровно эту сумму\n"
-        "4️⃣ Нажми «Я оплатил»\n"
-        "5️⃣ Получи ссылку на скачивание гайда\n\n"
-        "<b>❓ Вопросы?</b>\n"
+        f"<b>📖 Как пользоваться ботом:</b>\n\n"
+        f"1️⃣ Выбери вариант продукта\n"
+        f"2️⃣ Получишь реквизиты карты\n"
+        f"3️⃣ Переведи ровно эту сумму\n"
+        f"4️⃣ Нажми «Я оплатил»\n"
+        f"5️⃣ Получи ссылку на скачивание гайда\n\n"
+        f"<b>💰 Доступные варианты:</b>\n{products_list}\n\n"
+        f"<b>❓ Вопросы?</b>\n"
         f"📞 Телефон: {SUPPORT_PHONE}\n"
         f"💳 Карта: {fmt_card(CARD_NUMBER)}\n"
         f"👤 Получатель: {CARD_HOLDER}"
@@ -178,45 +194,57 @@ async def cmd_stats(message: Message):
     )
 
 
-# ── Обработка ввода суммы ──────────────────────────────────────
+# ── Выбор продукта ─────────────────────────────────────────────
 
-@router.message()
-async def handle_amount(message: Message):
-    user_id = message.from_user.id
+@router.callback_query(F.data.startswith("product:"))
+async def select_product(callback: CallbackQuery):
+    await callback.answer()
+    user_id = callback.from_user.id
 
     if not check_rate_limit(user_id):
-        await message.answer("⏱️ Подожди несколько секунд перед следующей попыткой")
+        await callback.answer("⏱️ Подожди несколько секунд", show_alert=True)
         return
 
-    text = message.text.strip().replace("$", "").strip()
+    product_key = callback.data.split(":", 1)[1]
+    product = PRODUCTS.get(product_key)
 
-    try:
-        amount = float(text)
+    if not product:
+        await callback.message.edit_text("❌ Продукт не найден")
+        return
 
-        if amount < MIN_AMOUNT:
-            await message.answer(f"❌ Минимальная сумма: ${MIN_AMOUNT}")
-            return
-        if amount > MAX_AMOUNT:
-            await message.answer(f"❌ Максимальная сумма: ${MAX_AMOUNT}")
-            return
+    user_products[user_id] = {
+        "key": product_key,
+        "name": product["name"],
+        "price": product["price"],
+    }
 
-        user_amounts[user_id] = amount
-        card = fmt_card(CARD_NUMBER)
+    card = fmt_card(CARD_NUMBER)
 
-        await message.answer(
-            f"💳 <b>Реквизиты для оплаты</b>\n\n"
-            f"Сумма: <b>${amount:.2f}</b>\n\n"
-            f"Номер карты:\n"
-            f"<code>{card}</code>\n"
-            f"Получатель: <b>{CARD_HOLDER}</b>\n\n"
-            f"<b>⚠️ Переведи ровно эту сумму!</b>\n\n"
-            f"Когда переведёшь — нажми кнопку ниже 👇",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="paid")],
-            ]),
-        )
-    except ValueError:
-        await message.answer("❌ Неверный формат. Введи число, например: <code>50</code> или <code>$100</code>")
+    await callback.message.edit_text(
+        f"💳 <b>Реквизиты для оплаты</b>\n\n"
+        f"Продукт: <b>{product['name']}</b>\n"
+        f"Сумма: <b>${product['price']:.2f}</b>\n\n"
+        f"Номер карты:\n"
+        f"<code>{card}</code>\n"
+        f"Получатель: <b>{CARD_HOLDER}</b>\n\n"
+        f"<b>⚠️ Переведи ровно эту сумму!</b>\n\n"
+        f"Когда переведёшь — нажми кнопку ниже 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data="paid")],
+            [InlineKeyboardButton(text="◀️ Выбрать другой", callback_data="back")],
+        ]),
+    )
+
+
+# ── Назад к выбору продукта ────────────────────────────────────
+
+@router.callback_query(F.data == "back")
+async def go_back(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "💳 <b>Выбери вариант продукта:</b>",
+        reply_markup=products_keyboard()
+    )
 
 
 # ── Клиент нажал "Я оплатил" ───────────────────────────────────
@@ -225,15 +253,15 @@ async def handle_amount(message: Message):
 async def payment_done(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
-    amount = user_amounts.get(user_id)
+    product = user_products.get(user_id)
     user = callback.from_user
     username = f"@{user.username}" if user.username else "—"
 
-    if not amount:
-        await callback.message.edit_text("❌ Ошибка. Попробуй ещё раз: введи сумму")
+    if not product:
+        await callback.message.edit_text("❌ Ошибка. Попробуй ещё раз: выбери продукт")
         return
 
-    save_payment(user_id, user.full_name, username, amount)
+    save_payment(user_id, user.full_name, username, product["name"], product["price"])
 
     await callback.message.edit_text(
         "✅ <b>Спасибо за оплату!</b>\n\n"
@@ -251,16 +279,16 @@ async def payment_done(callback: CallbackQuery):
                 f"💰 <b>Клиент оплатил!</b>\n\n"
                 f"Клиент: {user.full_name}\n"
                 f"TG: {username}\n"
-                f"Сумма: <b>${amount:.2f}</b>\n"
+                f"Продукт: {product['name']}\n"
+                f"Сумма: <b>${product['price']:.2f}</b>\n"
                 f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"⚠️ <b>Проверь поступление на карту!</b>\n"
-                f"Когда подтвердишь — напиши в ответ: /approve_{user_id}",
+                f"⚠️ <b>Проверь поступление на карту!</b>",
             )
         except Exception as e:
             logger.error(f"Admin notify error: {e}")
 
-    if user_id in user_amounts:
-        del user_amounts[user_id]
+    if user_id in user_products:
+        del user_products[user_id]
 
 
 # ── Скачивание гайда ───────────────────────────────────────────
