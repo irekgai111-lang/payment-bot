@@ -1,4 +1,4 @@
-# Payment Bot — оплата гайда для администраторов
+# Service Upgrade System — оплата гайда для администраторов
 
 Telegram-бот для продажи гайда «Обучение администраторов» (автор: Энже Гайнемухаметова).
 Клиент выбирает тариф → бот показывает реквизиты карты → клиент переводит и нажимает «Я оплатил» → админу приходит уведомление.
@@ -6,7 +6,7 @@ Telegram-бот для продажи гайда «Обучение админи
 ## Структура
 
 ```
-payment-bot/
+service-upgrade-system/
 ├── bot.py            # основной код бота (aiogram 3.27)
 ├── config.py         # услуги, цены, переменные окружения
 ├── .env              # токен, ID админа, данные карты (НЕ КОММИТИТЬ)
@@ -18,7 +18,7 @@ payment-bot/
 ## Запуск
 
 ```bash
-cd C:\Users\Dell\Documents\project\payment-bot
+cd C:\Users\Dell\Documents\project\service-upgrade-system
 pip install -r requirements.txt
 python bot.py
 ```

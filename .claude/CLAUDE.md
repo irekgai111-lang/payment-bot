@@ -1,12 +1,12 @@
-# Payment Bot — контекст для Claude
+# Service Upgrade System — контекст для Claude
 
 Telegram-бот продажи гайда «Обучение администраторов» (автор: Энже Гайнемухаметова).
 
-**GitHub:** https://github.com/irekgai111-lang/payment-bot
+**GitHub:** https://github.com/irekgai111-lang/service-upgrade-system
 
 ## Стек
 - Python 3.12, aiogram 3.27.0, python-dotenv 1.2.2
-- Запуск: `python bot.py` (из папки payment-bot/)
+- Запуск: `python bot.py` (из папки service-upgrade-system/)
 - Защита от двойного запуска через PID-файл `bot.pid`
 
 ## Файлы
@@ -24,8 +24,8 @@ Telegram-бот продажи гайда «Обучение администр�
 ## Правила
 - ⛔ **НИКОГДА не удалять папку `.git`** — это сердце проекта
 - НЕ коммитить `.env` (уже в .gitignore)
-- НЕ создавать копии бота в других папках — этот проект живёт только в `payment-bot/`
-- После каждого изменения: `git commit` + `git push` в https://github.com/irekgai111-lang/payment-bot
+- НЕ создавать копии бота в других папках — этот проект живёт только в `service-upgrade-system/`
+- После каждого изменения: `git commit` + `git push` в https://github.com/irekgai111-lang/service-upgrade-system
 - Карта: Visa 4278 3200 2347 0544, держатель `ENZHE GAINEMUKHAMETOVA`
 - Все сообщения боту — по-русски, обращение на «ты»
 
