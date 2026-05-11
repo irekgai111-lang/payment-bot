@@ -1,33 +1,47 @@
 # Service Upgrade System — контекст для Claude
 
 Telegram-бот продажи гайда «Обучение администраторов» (автор: Энже Гайнемухаметова).
+Клиент выбирает один из двух вариантов продукта → видит реквизиты карты → переводит деньги → нажимает «Я оплатил» → получает PDF-гайд.
 
 **GitHub:** https://github.com/irekgai111-lang/service-upgrade-system
 
 ## Стек
 - Python 3.12, aiogram 3.27.0, python-dotenv 1.2.2
-- Запуск: `python bot.py` (из папки service-upgrade-system/)
+- SQLite (`payments.db`) — встроенная БД платежей
+- Запуск: `python bot.py` из папки `service-upgrade-system/`
 - Защита от двойного запуска через PID-файл `bot.pid`
+- Rate limiting 5 сек между запросами
 
 ## Файлы
-- `bot.py` — хэндлеры /start, выбор услуги, показ реквизитов, подтверждение оплаты
-- `config.py` — словарь SERVICES (тарифы) + чтение .env
-- `.env` — BOT_TOKEN, ADMIN_ID, CARD_NUMBER, CARD_HOLDER (в .gitignore)
-- `plans/` — планы доработок
-- `docs/` — документация (API, сценарии, скриншоты)
+- `bot.py` — хэндлеры `/start`, `/help`, `/stats`, выбор продукта, реквизиты, подтверждение оплаты, отдача `guide.pdf`
+- `config.py` — словарь `PRODUCTS` (2 варианта) + чтение `.env`
+- `.env` — `BOT_TOKEN`, `ADMIN_ID`, `CARD_NUMBER`, `CARD_HOLDER`, `SUPPORT_PHONE` (в `.gitignore`)
+- `payments.db` — SQLite (создаётся автоматически; в `.gitignore`)
+- `guide.pdf` — PDF, который высылается клиенту после оплаты (положить вручную)
+- `plans/ROADMAP.md` — план доработок
+- `docs/` — пользовательские сценарии и research
 
-## Тарифы
-- guide_basic — «Администратор с нуля», 1 990 ₽
-- guide_pro — PRO + чек-листы и шаблоны, 3 490 ₽
-- guide_vip — VIP: гайд + разбор 1-на-1 (60 мин), 6 900 ₽
+## Текущие продукты (config.py → PRODUCTS)
+- `product_1` — Вариант 1, $29.99, «Базовый пакет»
+- `product_2` — Вариант 2, $49.99, «Премиум пакет»
+
+> Названия/цены меняются в `config.py`, перезапуск бота применяет изменения.
+
+## Команды бота
+- `/start` — приветствие и выбор варианта
+- `/help` — справка + контакты + список вариантов
+- `/stats` — количество и сумма pending-платежей (только `ADMIN_ID`)
+
+## Карта оплаты
+Visa `4278 3200 2347 0544`, держатель `ENZHE GAINEMUKHAMETOVA`.
+Поддержка: `+7 927 479 3004`.
 
 ## Правила
-- ⛔ **НИКОГДА не удалять папку `.git`** — это сердце проекта
-- НЕ коммитить `.env` (уже в .gitignore)
-- НЕ создавать копии бота в других папках — этот проект живёт только в `service-upgrade-system/`
-- После каждого изменения: `git commit` + `git push` в https://github.com/irekgai111-lang/service-upgrade-system
-- Карта: Visa 4278 3200 2347 0544, держатель `ENZHE GAINEMUKHAMETOVA`
+- ⛔ **НИКОГДА не удалять папку `.git`**
+- НЕ коммитить `.env`, `payments.db`, `bot.pid`, `bot_logs.log` (всё в `.gitignore`)
+- Этот проект живёт только в `service-upgrade-system/` — копий бота в других папках не создавать
+- После каждого изменения: `git commit` + `git push`
 - Все сообщения боту — по-русски, обращение на «ты»
 
 ## Открытые задачи
-См. README.md раздел «Что осталось сделать».
+См. `plans/ROADMAP.md`.

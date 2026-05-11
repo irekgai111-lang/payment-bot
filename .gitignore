@@ -3,3 +3,5 @@ __pycache__/
 *.py[cod]
 bot.pid
 bot.log
+bot_logs.log
+payments.db
