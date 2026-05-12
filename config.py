@@ -130,6 +130,35 @@ TEXTS = {
             "Время: {time}\n\n"
             "⚠️ <b>Проверьте поступление на карту!</b>"
         ),
+        "ask_receipt": (
+            "📸 <b>Пришлите скриншот чека об оплате</b>\n\n"
+            "Это ускорит проверку. Отправьте одно фото в этот чат.\n"
+            "Если чека нет — нажмите «Пропустить»."
+        ),
+        "receipt_skip_btn": "⏭️ Пропустить",
+        "receipt_received": (
+            "✅ Скриншот получен, передан администратору.\n"
+            "Мы проверим поступление в течение 10–15 минут."
+        ),
+        "receipt_skipped": (
+            "Хорошо, проверим оплату вручную.\n"
+            "Это может занять чуть больше времени."
+        ),
+        "not_a_photo": "⚠️ Пришлите, пожалуйста, именно фото (скриншот чека).",
+        "admin_receipt": (
+            "🧾 <b>Скриншот чека</b>\n\n"
+            "Клиент: {name}\n"
+            "TG: {username}\n"
+            "Продукт: {product}\n"
+            "Сумма: <b>${price:.2f}</b>"
+        ),
+        "admin_receipt_skipped": (
+            "⚠️ <b>Клиент пропустил скриншот</b>\n\n"
+            "Клиент: {name}\n"
+            "TG: {username}\n"
+            "Продукт: {product}\n"
+            "Сумма: <b>${price:.2f}</b>"
+        ),
     },
     "en": {
         "choose_lang": "🌐 Choose language / Выберите язык:",
@@ -179,6 +208,35 @@ TEXTS = {
             "Amount: <b>${price:.2f}</b>\n"
             "Time: {time}\n\n"
             "⚠️ <b>Check the card for the incoming transfer!</b>"
+        ),
+        "ask_receipt": (
+            "📸 <b>Please send a screenshot of the payment receipt</b>\n\n"
+            "It speeds up verification. Send one photo to this chat.\n"
+            "If you don't have a receipt — tap «Skip»."
+        ),
+        "receipt_skip_btn": "⏭️ Skip",
+        "receipt_received": (
+            "✅ Screenshot received and forwarded to the administrator.\n"
+            "We will verify the transfer within 10–15 minutes."
+        ),
+        "receipt_skipped": (
+            "Okay, we'll verify the payment manually.\n"
+            "This may take a bit longer."
+        ),
+        "not_a_photo": "⚠️ Please send a photo (a screenshot of the receipt).",
+        "admin_receipt": (
+            "🧾 <b>Payment receipt</b>\n\n"
+            "Client: {name}\n"
+            "TG: {username}\n"
+            "Product: {product}\n"
+            "Amount: <b>${price:.2f}</b>"
+        ),
+        "admin_receipt_skipped": (
+            "⚠️ <b>Client skipped the receipt</b>\n\n"
+            "Client: {name}\n"
+            "TG: {username}\n"
+            "Product: {product}\n"
+            "Amount: <b>${price:.2f}</b>"
         ),
     },
 }

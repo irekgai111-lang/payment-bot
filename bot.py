@@ -10,6 +10,8 @@ from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -79,16 +81,33 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cursor.execute("PRAGMA table_info(payments)")
+    cols = {row[1] for row in cursor.fetchall()}
+    if "screenshot_file_id" not in cols:
+        cursor.execute("ALTER TABLE payments ADD COLUMN screenshot_file_id TEXT")
     conn.commit()
     conn.close()
 
 
-def save_payment(user_id: int, name: str, username: str, product_name: str, amount: float):
+def save_payment(user_id: int, name: str, username: str, product_name: str, amount: float) -> int:
     conn = sqlite3.connect("payments.db")
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO payments (user_id, name, username, product_name, amount) VALUES (?, ?, ?, ?, ?)",
         (user_id, name, username, product_name, amount)
+    )
+    payment_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return payment_id
+
+
+def set_payment_screenshot(payment_id: int, file_id: str):
+    conn = sqlite3.connect("payments.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE payments SET screenshot_file_id = ? WHERE id = ?",
+        (file_id, payment_id),
     )
     conn.commit()
     conn.close()
@@ -115,6 +134,10 @@ user_products: Dict[int, dict] = {}
 user_last_request: Dict[int, datetime] = {}
 
 RATE_LIMIT_SECONDS = 3
+
+
+class PaymentFlow(StatesGroup):
+    waiting_receipt = State()
 
 
 def fmt_card(number: str) -> str:
@@ -180,11 +203,18 @@ def payment_keyboard(lang: str) -> InlineKeyboardMarkup:
     ])
 
 
+def receipt_skip_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=TEXTS[lang]["receipt_skip_btn"], callback_data="skip_receipt"),
+    ]])
+
+
 # ── /start ─────────────────────────────────────────────────────
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     user = message.from_user
+    await state.clear()
     # Сбрасываем выбранный продукт, язык спрашиваем заново только если не выбран
     if user.id not in user_lang:
         await message.answer(TEXTS[DEFAULT_LANG]["choose_lang"], reply_markup=lang_keyboard())
@@ -329,7 +359,7 @@ async def show_payment(callback: CallbackQuery):
 # ── Клиент нажал «Я оплатил» ───────────────────────────────────
 
 @router.callback_query(F.data == "paid")
-async def payment_done(callback: CallbackQuery):
+async def payment_done(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = callback.from_user.id
     product = user_products.get(user_id)
@@ -341,9 +371,9 @@ async def payment_done(callback: CallbackQuery):
         await callback.message.edit_text(TEXTS[lang]["no_product"])
         return
 
-    save_payment(user_id, user.full_name, username, product["name"], product["price"])
-
-    await callback.message.edit_text(TEXTS[lang]["paid_confirm"])
+    payment_id = save_payment(
+        user_id, user.full_name, username, product["name"], product["price"]
+    )
 
     if ADMIN_ID:
         try:
@@ -360,6 +390,89 @@ async def payment_done(callback: CallbackQuery):
         except Exception as e:
             logger.error(f"Admin notify error: {e}")
 
+    await state.set_state(PaymentFlow.waiting_receipt)
+    await state.update_data(
+        payment_id=payment_id,
+        product_name=product["name"],
+        product_price=product["price"],
+    )
+
+    await callback.message.edit_text(
+        TEXTS[lang]["ask_receipt"],
+        reply_markup=receipt_skip_keyboard(lang),
+    )
+
+
+# ── Скриншот чека ──────────────────────────────────────────────
+
+@router.message(PaymentFlow.waiting_receipt, F.photo)
+async def receive_receipt(message: Message, state: FSMContext):
+    user = message.from_user
+    user_id = user.id
+    lang = lang_of(user_id)
+    data = await state.get_data()
+    payment_id = data.get("payment_id")
+    product_name = data.get("product_name", "—")
+    product_price = float(data.get("product_price", 0))
+
+    file_id = message.photo[-1].file_id
+    if payment_id:
+        set_payment_screenshot(payment_id, file_id)
+
+    if ADMIN_ID:
+        username = f"@{user.username}" if user.username else "—"
+        caption = TEXTS[lang]["admin_receipt"].format(
+            name=user.full_name,
+            username=username,
+            product=product_name,
+            price=product_price,
+        )
+        try:
+            await bot.send_photo(ADMIN_ID, file_id, caption=caption)
+        except Exception as e:
+            logger.error(f"Admin receipt forward error: {e}")
+
+    await message.answer(TEXTS[lang]["receipt_received"])
+    await state.clear()
+    user_products.pop(user_id, None)
+
+
+@router.message(PaymentFlow.waiting_receipt)
+async def receipt_not_a_photo(message: Message):
+    lang = lang_of(message.from_user.id)
+    await message.answer(
+        TEXTS[lang]["not_a_photo"],
+        reply_markup=receipt_skip_keyboard(lang),
+    )
+
+
+@router.callback_query(PaymentFlow.waiting_receipt, F.data == "skip_receipt")
+async def skip_receipt(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    user = callback.from_user
+    user_id = user.id
+    lang = lang_of(user_id)
+    data = await state.get_data()
+    product_name = data.get("product_name", "—")
+    product_price = float(data.get("product_price", 0))
+
+    if ADMIN_ID:
+        username = f"@{user.username}" if user.username else "—"
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                TEXTS[lang]["admin_receipt_skipped"].format(
+                    name=user.full_name,
+                    username=username,
+                    product=product_name,
+                    price=product_price,
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Admin skip notify error: {e}")
+
+    await callback.message.edit_text(TEXTS[lang]["receipt_skipped"])
+    await state.clear()
     user_products.pop(user_id, None)
 
 
