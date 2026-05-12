@@ -6,7 +6,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 CARD_NUMBER = os.getenv("CARD_NUMBER", "4278320023470544")
-CARD_HOLDER = os.getenv("CARD_HOLDER", "ANZHE")
+CARD_HOLDER = os.getenv("CARD_HOLDER", "Enzhe")
 CARD_TYPE = os.getenv("CARD_TYPE", "VISA (USD)")
 SUPPORT_PHONE = os.getenv("SUPPORT_PHONE", "+7 927 479 3004")
 
