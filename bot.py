@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -42,6 +43,12 @@ PAYMENT_TTL_SECONDS = 2 * 60 * 60   # 2 часа на pending
 EXPIRY_INTERVAL_SECONDS = 5 * 60    # проверка раз в 5 минут
 MAX_AMOUNT_OFFSET_CENTS = 29        # сумма уменьшается на 0..29 центов
 ACTIVE_STATUSES = ("awaiting_receipt", "awaiting_review")
+
+# Стадии сценария собеседования при /start.
+STAGE_LANG = "awaiting_lang"
+STAGE_FIO = "awaiting_fio"
+STAGE_PHONE = "awaiting_phone"
+STAGE_READY = "ready"
 
 # ── PID-lock ───────────────────────────────────────────────────
 
@@ -109,6 +116,15 @@ def init_db():
                 active_payment_id INTEGER
             )
         """)
+        cur.execute("PRAGMA table_info(users)")
+        ucols = {row[1] for row in cur.fetchall()}
+        for col, ddl in [
+            ("fio",   "ALTER TABLE users ADD COLUMN fio TEXT"),
+            ("phone", "ALTER TABLE users ADD COLUMN phone TEXT"),
+            ("stage", "ALTER TABLE users ADD COLUMN stage TEXT"),
+        ]:
+            if col not in ucols:
+                cur.execute(ddl)
         conn.commit()
 
 
@@ -132,10 +148,16 @@ def upsert_user_on_start(user_id: int) -> bool:
         return is_new
 
 
-def get_user_lang(user_id: int) -> Optional[str]:
+def get_user(user_id: int) -> Optional[sqlite3.Row]:
     with _conn() as conn:
-        row = conn.execute("SELECT lang FROM users WHERE user_id = ?", (user_id,)).fetchone()
-        return row["lang"] if row and row["lang"] else None
+        return conn.execute(
+            "SELECT * FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+
+
+def get_user_lang(user_id: int) -> Optional[str]:
+    row = get_user(user_id)
+    return row["lang"] if row and row["lang"] else None
 
 
 def set_user_lang(user_id: int, lang: str):
@@ -144,6 +166,30 @@ def set_user_lang(user_id: int, lang: str):
             "INSERT INTO users (user_id, lang) VALUES (?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET lang = excluded.lang",
             (user_id, lang),
+        )
+        conn.commit()
+
+
+def set_stage(user_id: int, stage: Optional[str]):
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE users SET stage = ? WHERE user_id = ?", (stage, user_id),
+        )
+        conn.commit()
+
+
+def set_fio(user_id: int, fio: str):
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE users SET fio = ? WHERE user_id = ?", (fio, user_id),
+        )
+        conn.commit()
+
+
+def set_phone(user_id: int, phone: str):
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE users SET phone = ? WHERE user_id = ?", (phone, user_id),
         )
         conn.commit()
 
@@ -188,7 +234,6 @@ def pick_unique_amount(base_amount: float) -> float:
         candidate = round(base_amount - off / 100, 2)
         if candidate > 0 and candidate not in used:
             return candidate
-    # переполнение — крайне маловероятно; возвращаем базу
     return round(base_amount, 2)
 
 
@@ -299,6 +344,21 @@ def t(user_id: int, key: str) -> str:
     return TEXTS[lang_of(user_id)][key]
 
 
+# Валидация ФИО: ≥2 слова, только буквы/дефис/пробел, длина 2..80 символов
+# на каждое слово; покрывает RU/EN/латиницу.
+_FIO_RE = re.compile(r"^[A-Za-zА-Яа-яЁё\-]{2,80}(?:\s+[A-Za-zА-Яа-яЁё\-]{2,80}){1,3}$")
+
+# Валидация телефона: 10..15 цифр, может начинаться с + или 8.
+_PHONE_RE = re.compile(r"^\+?\d{10,15}$")
+
+
+def normalize_phone(raw: str) -> Optional[str]:
+    cleaned = re.sub(r"[\s\-()]+", "", raw.strip())
+    if _PHONE_RE.match(cleaned):
+        return cleaned
+    return None
+
+
 # ── Keyboards ──────────────────────────────────────────────────
 
 def lang_keyboard() -> InlineKeyboardMarkup:
@@ -352,6 +412,12 @@ def admin_review_keyboard(payment_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
+def download_keyboard(lang: str, url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=TEXTS[lang]["download_btn"], url=url),
+    ]])
+
+
 # ── /start ─────────────────────────────────────────────────────
 
 @router.message(Command("start"))
@@ -360,10 +426,19 @@ async def cmd_start(message: Message):
     is_new = upsert_user_on_start(user.id)
     set_active_payment(user.id, None)
 
-    if not get_user_lang(user.id):
+    row = get_user(user.id)
+    has_lang = bool(row and row["lang"])
+    has_contact = bool(row and row["fio"] and row["phone"])
+
+    if not has_lang:
+        set_stage(user.id, STAGE_LANG)
         await message.answer(TEXTS[DEFAULT_LANG]["choose_lang"], reply_markup=lang_keyboard())
+    elif not has_contact:
+        set_stage(user.id, STAGE_FIO)
+        await message.answer(t(user.id, "welcome"))
     else:
-        await _show_products(message, user)
+        set_stage(user.id, STAGE_READY)
+        await _show_products(message, user, returning=True)
 
     if ADMIN_ID and is_new:
         username = f"@{user.username}" if user.username else "—"
@@ -378,9 +453,12 @@ async def cmd_start(message: Message):
             logger.error(f"Admin notify error: {e}")
 
 
-async def _show_products(message_or_cb, user):
+async def _show_products(message_or_cb, user, returning: bool = False):
     lang = lang_of(user.id)
-    text = TEXTS[lang]["greeting"].format(name=user.first_name)
+    if returning:
+        text = TEXTS[lang]["greeting_returning"].format(name=user.first_name)
+    else:
+        text = TEXTS[lang]["info_received"]
     if isinstance(message_or_cb, Message):
         await message_or_cb.answer(text, reply_markup=products_keyboard(lang))
     else:
@@ -396,7 +474,15 @@ async def select_lang(callback: CallbackQuery):
     if lang not in LANGUAGES:
         lang = DEFAULT_LANG
     set_user_lang(callback.from_user.id, lang)
-    await _show_products(callback, callback.from_user)
+
+    row = get_user(callback.from_user.id)
+    has_contact = bool(row and row["fio"] and row["phone"])
+    if has_contact:
+        set_stage(callback.from_user.id, STAGE_READY)
+        await _show_products(callback, callback.from_user, returning=True)
+    else:
+        set_stage(callback.from_user.id, STAGE_FIO)
+        await callback.message.edit_text(t(callback.from_user.id, "welcome"))
 
 
 @router.callback_query(F.data == "change_lang")
@@ -407,15 +493,13 @@ async def change_lang(callback: CallbackQuery):
     )
 
 
-# ── /help ──────────────────────────────────────────────────────
+# ── /help, /stats ──────────────────────────────────────────────
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     lang = lang_of(message.from_user.id)
     await message.answer(TEXTS[lang]["help"].format(phone=SUPPORT_PHONE))
 
-
-# ── /stats ─────────────────────────────────────────────────────
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
@@ -454,7 +538,7 @@ async def open_product(callback: CallbackQuery):
 async def back_to_products(callback: CallbackQuery):
     await callback.answer()
     set_active_payment(callback.from_user.id, None)
-    await _show_products(callback, callback.from_user)
+    await _show_products(callback, callback.from_user, returning=True)
 
 
 # ── Создаём заявку, показываем реквизиты ───────────────────────
@@ -478,15 +562,18 @@ async def show_payment(callback: CallbackQuery):
     amount = pick_unique_amount(base)
     username = f"@{user.username}" if user.username else "—"
 
+    # Подмешиваем ФИО клиента в name заявки (если есть), иначе TG-имя.
+    row = get_user(user.id)
+    client_name = (row["fio"] if row and row["fio"] else user.full_name)
+
     payment_id = create_payment(
-        user.id, user.full_name, username,
+        user.id, client_name, username,
         key, product["name"][lang], base, amount,
     )
     set_active_payment(user.id, payment_id)
 
     await callback.message.edit_text(
         TEXTS[lang]["payment_info"].format(
-            title=TEXTS[lang]["payment_title"],
             product=product["name"][lang],
             price=amount,
             base_price=base,
@@ -504,7 +591,7 @@ async def cancel_payment(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
     set_active_payment(user_id, None)
-    await _show_products(callback, callback.from_user)
+    await _show_products(callback, callback.from_user, returning=True)
 
 
 # ── Клиент нажал «Я оплатил» — просим скриншот ─────────────────
@@ -522,7 +609,7 @@ async def payment_done(callback: CallbackQuery):
         return
 
     await callback.message.edit_text(
-        TEXTS[lang]["ask_receipt"].format(order_id=payment_id),
+        TEXTS[lang]["ask_receipt"],
         reply_markup=receipt_skip_keyboard(lang, payment_id),
     )
 
@@ -543,12 +630,11 @@ async def receive_photo(message: Message):
     file_id = message.photo[-1].file_id
     payment_id = active["id"]
     if not attach_screenshot(payment_id, file_id):
-        # параллельный переход — заявка уже не в awaiting_receipt
         await message.answer(TEXTS[lang]["no_active_payment"])
         return
 
     await _notify_admin_for_review(payment_id, with_photo=file_id)
-    await message.answer(TEXTS[lang]["receipt_received"])
+    await message.answer(TEXTS[lang]["wait_review"])
     set_active_payment(user_id, None)
 
 
@@ -568,7 +654,7 @@ async def skip_receipt_cb(callback: CallbackQuery):
         return
 
     await _notify_admin_for_review(payment_id, with_photo=None)
-    await callback.message.edit_text(TEXTS[lang]["receipt_skipped"])
+    await callback.message.edit_text(TEXTS[lang]["wait_review"])
     set_active_payment(user_id, None)
 
 
@@ -578,9 +664,13 @@ async def _notify_admin_for_review(payment_id: int, with_photo: Optional[str]):
     p = get_payment(payment_id)
     if not p:
         return
+    u = get_user(p["user_id"])
+    fio = (u["fio"] if u and u["fio"] else p["name"]) or "—"
+    phone = (u["phone"] if u and u["phone"] else "—") or "—"
     caption = TEXTS[DEFAULT_LANG]["admin_review"].format(
         order_id=p["id"],
-        name=p["name"],
+        fio=fio,
+        phone=phone,
         username=p["username"] or "—",
         user_id=p["user_id"],
         product=p["product_name"],
@@ -641,17 +731,25 @@ async def _admin_review(callback: CallbackQuery, approve: bool):
         pass
 
     client_lang = get_user_lang(payment["user_id"]) or DEFAULT_LANG
-    key = "client_confirmed" if approve else "client_rejected"
     try:
-        await bot.send_message(
-            payment["user_id"],
-            TEXTS[client_lang][key].format(
-                order_id=payment_id,
-                product=payment["product_name"],
-                price=float(payment["amount"]),
-                phone=SUPPORT_PHONE,
-            ),
-        )
+        if approve:
+            product = PRODUCTS.get(payment["product_key"]) or {}
+            url = product.get("download_url") or ""
+            kb = download_keyboard(client_lang, url) if url else None
+            await bot.send_message(
+                payment["user_id"],
+                TEXTS[client_lang]["client_confirmed"],
+                reply_markup=kb,
+            )
+        else:
+            await bot.send_message(
+                payment["user_id"],
+                TEXTS[client_lang]["client_rejected"].format(
+                    order_id=payment_id,
+                    price=float(payment["amount"]),
+                    phone=SUPPORT_PHONE,
+                ),
+            )
     except Exception as e:
         logger.error(f"Client notify error: {e}")
 
@@ -669,11 +767,58 @@ async def ttl_worker():
         await asyncio.sleep(EXPIRY_INTERVAL_SECONDS)
 
 
-# ── Fallback на любые другие сообщения ─────────────────────────
+# ── Текстовые сообщения: сценарий ФИО → телефон, иначе fallback ─
 
-@router.message()
-async def fallback(message: Message):
-    lang = lang_of(message.from_user.id)
+@router.message(F.text)
+async def text_router(message: Message):
+    user_id = message.from_user.id
+    row = get_user(user_id)
+    if not row:
+        # Пользователь не нажимал /start — отправляем туда.
+        await message.answer(t(user_id, "fallback"))
+        return
+
+    lang = lang_of(user_id)
+    stage = row["stage"] or STAGE_READY
+    text = (message.text or "").strip()
+
+    if stage == STAGE_FIO:
+        if not _FIO_RE.match(text):
+            await message.answer(TEXTS[lang]["invalid_fio"])
+            return
+        set_fio(user_id, text)
+        set_stage(user_id, STAGE_PHONE)
+        await message.answer(TEXTS[lang]["ask_phone"])
+        return
+
+    if stage == STAGE_PHONE:
+        phone = normalize_phone(text)
+        if not phone:
+            await message.answer(TEXTS[lang]["invalid_phone"])
+            return
+        set_phone(user_id, phone)
+        set_stage(user_id, STAGE_READY)
+        await message.answer(
+            TEXTS[lang]["info_received"], reply_markup=products_keyboard(lang),
+        )
+        # Уведомляем админа о заполненной анкете.
+        if ADMIN_ID:
+            username = f"@{message.from_user.username}" if message.from_user.username else "—"
+            try:
+                await bot.send_message(
+                    ADMIN_ID,
+                    TEXTS[DEFAULT_LANG]["admin_contact_collected"].format(
+                        fio=row["fio"] or "—",
+                        phone=phone,
+                        username=username,
+                        user_id=user_id,
+                    ),
+                )
+            except Exception as e:
+                logger.error(f"Admin contact notify error: {e}")
+        return
+
+    # STAGE_LANG / STAGE_READY / неизвестное — generic fallback
     await message.answer(TEXTS[lang]["fallback"])
 
 
